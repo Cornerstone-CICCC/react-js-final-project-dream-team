@@ -4,7 +4,7 @@ const TILE_COLORS: Record<string, { text: string; dot: string }> = {
   red: { text: '#ea4d1c', dot: '#ea4d1c' },
   blue: { text: '#2563EB', dot: '#2563EB' },
   black: { text: '#1a1c1c', dot: '#1a1c1c' },
-  yellow: { text: '#BA7517', dot: '#BA7517' },
+  orange: { text: '#BA7517', dot: '#BA7517' },
 };
 
 interface TileCardProps {

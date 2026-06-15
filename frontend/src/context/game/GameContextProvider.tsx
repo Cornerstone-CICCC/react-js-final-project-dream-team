@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, type ReactNode } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { GameContext } from './GameContext';
-import type { GameState, TileGroup } from './GameContext';
+import type { GameState, TileGroup, Tile } from './GameContext';
+import toast from 'react-hot-toast';
 
-const SOCKET_URL = 'http://localhost:4000';
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3000';
 
 const GameContextProvider = ({ children }: { children: ReactNode }) => {
   const [socket, setSocket] = useState<Socket | null>(null);
@@ -24,17 +25,41 @@ const GameContextProvider = ({ children }: { children: ReactNode }) => {
       setIsConnected(false);
     });
 
+    // Full game snapshot after every state change
     newSocket.on('game:state', (state: GameState) => {
       setGameState(state);
     });
 
-    newSocket.on('move:valid', (updateState: Partial<GameState>) => {
-      setGameState((prev) => (prev ? { ...prev, ...updateState } : prev));
+    // Error from server — invalid move or unauthorized action
+    newSocket.on('game:error', ({ message }: { message: string }) => {
+      toast.error(message || 'Something went wrong.');
     });
 
-    newSocket.on('turn:change', (currentTurn: string) => {
-      setGameState((prev) => (prev ? { ...prev, currentTurn } : prev));
-    });
+    // Game finished — includes scores and winner
+    newSocket.on(
+      'game:over',
+      ({
+        winner,
+        scores,
+        turnCount,
+      }: {
+        winner: { userId: string; username: string };
+        scores: GameState['scores'];
+        turnCount: number;
+      }) => {
+        setGameState((prev) =>
+          prev
+            ? {
+                ...prev,
+                winner: winner.userId,
+                scores,
+                turnCount,
+                status: 'finished',
+              }
+            : prev,
+        );
+      },
+    );
 
     setSocket(newSocket);
 
@@ -43,46 +68,39 @@ const GameContextProvider = ({ children }: { children: ReactNode }) => {
     };
   }, []);
 
-  //////////////////////////////////
+  // ── Emit actions ─────────────────────────────────────────────────────────
 
-  const joinRoom = useCallback(
-    (roomId: string, userId: string) => {
-      socket?.emit('room:join', { roomId, userId });
+  const joinGame = useCallback(
+    (roomId: string) => {
+      socket?.emit('game:join', { roomId });
     },
     [socket],
   );
 
-  const leaveRoom = useCallback(
-    (roomId: string, userId: string) => {
-      socket?.emit('room:leave', { roomId, userId });
+  const startGame = useCallback(
+    (roomId: string) => {
+      socket?.emit('game:start', { roomId });
+    },
+    [socket],
+  );
+
+  const playTurn = useCallback(
+    (roomId: string, newBoard: TileGroup[], tilesPlayed: Tile[]) => {
+      socket?.emit('game:playTurn', { roomId, newBoard, tilesPlayed });
     },
     [socket],
   );
 
   const drawTile = useCallback(
-    (gameId: string, playerId: string) => {
-      socket?.emit('tile:draw', { gameId, playerId });
+    (roomId: string) => {
+      socket?.emit('game:draw', { roomId });
     },
     [socket],
   );
 
-  const placeTiles = useCallback(
-    (gameId: string, playerId: string, groups: TileGroup[]) => {
-      socket?.emit('tile:place', { gameId, playerId, groups });
-    },
-    [socket],
-  );
-
-  const returnTiles = useCallback(
-    (gameId: string, playerId: string) => {
-      socket?.emit('tile:return', { gameId, playerId });
-    },
-    [socket],
-  );
-
-  const endTurn = useCallback(
-    (gameId: string, playerId: string) => {
-      socket?.emit('turn:end', { gameId, playerId });
+  const leaveGame = useCallback(
+    (roomId: string) => {
+      socket?.emit('game:leave', { roomId });
     },
     [socket],
   );
@@ -92,12 +110,11 @@ const GameContextProvider = ({ children }: { children: ReactNode }) => {
       value={{
         gameState,
         isConnected,
-        joinRoom,
-        leaveRoom,
+        joinGame,
+        startGame,
+        playTurn,
         drawTile,
-        placeTiles,
-        returnTiles,
-        endTurn,
+        leaveGame,
       }}
     >
       {children}

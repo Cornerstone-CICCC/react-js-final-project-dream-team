@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useState, useEffect } from 'react';
+import { useNavigate, useParams } from 'react-router';
 import { useGame } from '../context/game/UseGame';
 import { useUser } from '../context/user/UseUser';
 import {
@@ -11,29 +11,45 @@ import {
 } from '@dnd-kit/core';
 import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
 import type { Tile, TileGroup } from '../context/game/GameContext';
+
 import Sidebar from '../components/game/Sidebar';
-import Playerpanel from '../components/game/Playerpanel';
+import PlayerPanel from '../components/game/Playerpanel';
 import Board from '../components/game/Board';
 import Rack from '../components/game/Rack';
 import GameLog from '../components/game/GameLog';
 import TileCard from '../components/game/TileCard';
 
 const GamePage = () => {
-  const { gameState, drawTile, placeTiles, returnTiles, endTurn } = useGame();
+  const { roomId } = useParams<{ roomId: string }>();
+  const { gameState, joinGame, startGame, playTurn, drawTile, leaveGame } =
+    useGame();
   const { user } = useUser();
   const navigate = useNavigate();
 
   const [selectedTile, setSelectedTile] = useState<string | null>(null);
   const [activeTile, setActiveTile] = useState<Tile | null>(null);
-  const [localBoard, setLocalBoard] = useState<TileGroup[]>(
-    gameState?.board ?? [],
-  );
-  const [localRack, setLocalRack] = useState<Tile[]>(gameState?.rack ?? []);
+  const [localBoard, setLocalBoard] = useState<TileGroup[]>([]);
+  const [localRack, setLocalRack] = useState<Tile[]>([]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   );
+
   const isMyTurn = gameState?.currentTurn === user?.id;
+  const isWaiting = gameState?.status === 'waiting';
+  const isHost = gameState?.players[0]?.userId === user?.id;
+
+  useEffect(() => {
+    if (roomId) joinGame(roomId);
+    return () => {
+      if (roomId) leaveGame(roomId);
+    };
+  }, [roomId]);
+
+  useEffect(() => {
+    if (gameState?.board) setLocalBoard(gameState.board);
+    if (gameState?.myHand) setLocalRack(gameState.myHand);
+  }, [gameState]);
 
   const handleDragStart = (event: DragStartEvent) => {
     const tile = event.active.data.current?.tile as Tile;
@@ -53,31 +69,90 @@ const GamePage = () => {
   };
 
   const handleDeclare = () => {
-    if (!gameState || !user) return;
-    placeTiles(gameState.gameId, user.id, localBoard);
+    if (!roomId || !gameState) return;
+    const played = gameState.myHand.filter(
+      (t) => !localRack.find((r) => r.id === t.id),
+    );
+    playTurn(roomId, localBoard, played);
   };
 
   const handleReturn = () => {
-    if (!gameState || !user) return;
-    returnTiles(gameState.gameId, user.id);
+    if (!gameState) return;
     setLocalBoard(gameState.board);
-    setLocalRack(gameState.rack);
+    setLocalRack(gameState.myHand);
   };
 
   const handleEndTurn = () => {
-    if (!gameState || !user) return;
-    endTurn(gameState.gameId, user.id);
+    if (!roomId) return;
+    drawTile(roomId);
   };
 
   const handleDrawTile = () => {
-    if (!gameState || !user) return;
-    drawTile(gameState.gameId, user.id);
+    if (!roomId) return;
+    drawTile(roomId);
+  };
+
+  const handleStartGame = () => {
+    if (!roomId) return;
+    startGame(roomId);
   };
 
   if (!gameState) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <p className="text-sm text-[#747878]">Connecting to game...</p>
+      </div>
+    );
+  }
+
+  if (isWaiting) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-6">
+        <h2 className="text-2xl font-bold text-[#1a1c1c]">
+          Waiting for players...
+        </h2>
+        <p className="text-sm text-[#747878]">
+          {gameState.players.length} / 4 players joined
+        </p>
+        <div className="flex flex-col gap-2">
+          {gameState.players.map((p) => (
+            <div
+              key={p.userId}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-[#E2E2E2] rounded-full"
+            >
+              <div className="w-6 h-6 rounded-full bg-[#E2E2E2] flex items-center justify-center">
+                <span className="text-xs font-bold text-[#747878]">
+                  {p.username.charAt(0).toUpperCase()}
+                </span>
+              </div>
+              <span className="text-sm font-medium text-[#1a1c1c]">
+                {p.username}
+              </span>
+              {p.userId === gameState.players[0].userId && (
+                <span className="text-xs text-[#ADADAD]">host</span>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {isHost && gameState.players.length >= 2 && (
+          <button
+            onClick={handleStartGame}
+            className="px-8 py-3 bg-[#1a1c1c] text-white text-sm font-bold rounded-full hover:opacity-85 transition-all"
+          >
+            Start Game
+          </button>
+        )}
+
+        <button
+          onClick={() => {
+            leaveGame(roomId!);
+            navigate('/lobby');
+          }}
+          className="text-sm text-[#747878] hover:text-[#1a1c1c] transition-colors"
+        >
+          Leave Table
+        </button>
       </div>
     );
   }
@@ -89,20 +164,23 @@ const GamePage = () => {
       onDragEnd={handleDragEnd}
     >
       <div className="flex flex-1 overflow-hidden">
+        {/* Sidebar */}
         <Sidebar />
 
+        {/* Main area */}
         <div className="flex flex-col flex-1 overflow-hidden">
-          {/* Players */}
-          <Playerpanel
-            players={gameState.players}
+          <PlayerPanel
+            players={gameState.players.map((p) => ({
+              id: p.userId,
+              username: p.username,
+              tileCount: gameState.handSizes[p.userId] ?? 0,
+            }))}
             currentTurn={gameState.currentTurn}
             currentUserId={user?.id ?? ''}
           />
 
-          {/* Board */}
           <Board board={localBoard} />
 
-          {/* Rack */}
           <Rack
             rack={localRack}
             selectedTile={selectedTile}
@@ -116,13 +194,14 @@ const GamePage = () => {
 
         {/* Game Log */}
         <GameLog
-          logs={[
-            { time: '09:41', text: 'Jordan played a run of 3, 4, 5, 6 Black.' },
-            { time: '09:40', text: 'Sam drew a tile from the pile.' },
-            { time: '09:38', text: 'Alex declared a group of 10s.' },
-            { time: '09:37', text: 'Game started. Initial draw completed.' },
-          ]}
-          drawPileCount={gameState.drawPileCount}
+          logs={gameState.gameLog.map((log) => ({
+            time: new Date(log.timestamp).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+            }),
+            text: `${log.username} ${log.message}`,
+          }))}
+          drawPileCount={gameState.deckSize}
           isMyTurn={isMyTurn}
           onDrawTile={handleDrawTile}
         />
@@ -132,18 +211,37 @@ const GamePage = () => {
       <DragOverlay>{activeTile && <TileCard tile={activeTile} />}</DragOverlay>
 
       {/* Game over modal */}
-      {gameState.winner && (
+      {gameState.status === 'finished' && gameState.winner && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-3xl p-10 max-w-sm w-full mx-4 flex flex-col items-center gap-4 shadow-2xl">
             <span className="text-4xl">🏆</span>
             <h2 className="text-3xl font-bold text-[#1a1c1c]">
-              {gameState.winner.id === user?.id
+              {gameState.winner === user?.id
                 ? 'You Won!'
-                : `${gameState.winner.username} Won!`}
+                : `${gameState.players.find((p) => p.userId === gameState.winner)?.username} Won!`}
             </h2>
             <p className="text-xs font-bold tracking-widest text-[#ADADAD]">
               GAME COMPLETE
             </p>
+
+            {/* Scores */}
+            <div className="w-full flex flex-col gap-2 mt-2">
+              {gameState.scores.map((s) => (
+                <div
+                  key={s.userId}
+                  className="flex justify-between items-center px-4 py-2 bg-[#F3F3F4] rounded-xl"
+                >
+                  <span className="text-sm font-medium text-[#1a1c1c]">
+                    {s.username}
+                  </span>
+                  <span
+                    className={`text-sm font-bold ${s.score >= 0 ? 'text-[#1D9E75]' : 'text-[#ea4d1c]'}`}
+                  >
+                    {s.score > 0 ? `+${s.score}` : s.score}
+                  </span>
+                </div>
+              ))}
+            </div>
 
             <div className="flex gap-3 w-full mt-2">
               <button

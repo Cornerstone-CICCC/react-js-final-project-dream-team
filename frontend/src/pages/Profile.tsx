@@ -16,15 +16,12 @@ const ProfilePage = () => {
     }
 
     try {
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/users/username`,
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: newUsername }),
-          credentials: 'include',
-        },
-      );
+      const res = await fetch('/api/users/me', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: newUsername }),
+        credentials: 'include',
+      });
 
       if (!res.ok) {
         const errorData = await res.json();

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import toast from 'react-hot-toast';
 import { HiUsers } from 'react-icons/hi2';
@@ -19,7 +19,7 @@ const Lobby = () => {
   const [showModal, setShowModal] = useState<boolean>(false);
   const [tableName, setTableName] = useState<string>('');
 
-  const [rooms] = useState<Room[]>([
+  const [rooms, setRooms] = useState<Room[]>([
     {
       id: '14',
       name: 'Table #14',
@@ -56,7 +56,7 @@ const Lobby = () => {
 
   const handleJoin = async (roomId: string) => {
     try {
-      const res = await fetch('', {
+      const res = await fetch(`/api/tables/${roomId}/join`, {
         method: 'POST',
         credentials: 'include',
       });
@@ -81,8 +81,10 @@ const Lobby = () => {
     }
 
     try {
-      const res = await fetch('', {
+      const res = await fetch('/api/tables', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: tableName }),
         credentials: 'include',
       });
 
@@ -95,7 +97,7 @@ const Lobby = () => {
       const data = await res.json();
       setShowModal(false);
       setTableName('');
-      navigate(`/game/${data.id}`);
+      navigate(`/game/${data.roomId}`);
     } catch (error) {
       console.error(error);
       toast.error('Something went wrong with the Network');
@@ -106,6 +108,31 @@ const Lobby = () => {
     setShowModal(false);
     setTableName('');
   };
+
+  useEffect(() => {
+    const fetchTables = async () => {
+      const res = await fetch('/api/tables');
+      const data = await res.json();
+      setRooms(
+        data.tables.map(
+          (t: {
+            _id: string;
+            tableNumber: number;
+            players: { userId: string }[];
+            maxPlayers: number;
+            status: 'waiting' | 'in-progress';
+          }) => ({
+            id: t._id,
+            name: `Table #${t.tableNumber}`,
+            players: t.players.length,
+            maxPlayers: t.maxPlayers,
+            status: t.status,
+          }),
+        ),
+      );
+    };
+    fetchTables();
+  }, []);
 
   return (
     <div className="max-w-300 mx-auto px-6 py-10">
@@ -165,7 +192,7 @@ const Lobby = () => {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {rooms.map((room) => {
+          {filteredRooms.map((room) => {
             const isFull = room.players >= room.maxPlayers;
 
             return (

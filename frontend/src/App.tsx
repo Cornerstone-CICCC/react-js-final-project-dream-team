@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from 'react-router';
+import { BrowserRouter, Route, Routes, Navigate } from 'react-router';
 import Signup from './pages/auth/Signup';
 import Login from './pages/auth/Login';
 import NotFound from './pages/NotFound';
@@ -9,11 +9,14 @@ import AuthLayout from './layouts/AuthLayout';
 import GameLayout from './layouts/GameLayout';
 import GamePage from './pages/GamePage';
 import ProfilePage from './pages/Profile';
+import GameContextProvider from './context/game/GameContextProvider';
 
 const App = () => {
   return (
     <BrowserRouter>
       <Routes>
+        <Route path="/" element={<Navigate to="/auth/login" replace />} />
+
         {/* Public Routes */}
         <Route path="auth" element={<AuthLayout />}>
           <Route path="login" element={<Login />} />
@@ -29,7 +32,14 @@ const App = () => {
 
         {/* Game Route */}
         <Route element={<GameLayout />}>
-          <Route path="game/:roomId" element={<GamePage />} />
+          <Route
+            path="game/:roomId"
+            element={
+              <GameContextProvider>
+                <GamePage />
+              </GameContextProvider>
+            }
+          />
         </Route>
 
         {/* </Route> del ProtectedRoute */}

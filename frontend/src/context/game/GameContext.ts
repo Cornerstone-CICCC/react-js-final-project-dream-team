@@ -1,50 +1,72 @@
 import { createContext } from 'react';
 
-export type TileColor = 'red' | 'blue' | 'black' | 'yellow';
+export type TileColor = 'red' | 'blue' | 'black' | 'orange';
 
 export interface Tile {
   id: string;
-  number: number;
-  color: TileColor;
+  color: TileColor | null;
+  number: number | null;
+  isJoker: boolean;
 }
 
 export type TileGroup = Tile[];
 
 export interface Player {
-  id: string;
+  userId: string;
   username: string;
-  tileCount: number;
+}
+
+export interface GameLogEntry {
+  timestamp: string;
+  userId: string;
+  username: string;
+  message: string;
+}
+
+export interface PlayerScore {
+  userId: string;
+  username: string;
+  score: number;
+  tilesLeft: number;
+  won: boolean;
 }
 
 export interface GameState {
-  gameId: string;
+  roomId: string;
+  status: 'waiting' | 'in-progress' | 'finished';
   players: Player[];
   currentTurn: string;
+  turnCount: number;
   board: TileGroup[];
-  rack: Tile[];
-  drawPileCount: number;
-  isStarted: boolean;
-  winner: Player | null;
+  deckSize: number;
+  myHand: Tile[];
+  handSizes: Record<string, number>;
+  initialMeldDone: Record<string, boolean>;
+  gameLog: GameLogEntry[];
+  scores: PlayerScore[];
+  winner: string | null; // userId
 }
 
 type GameContextType = {
   gameState: GameState | null;
   isConnected: boolean;
-  joinRoom: (roomId: string, userId: string) => void;
-  leaveRoom: (roomId: string, userId: string) => void;
-  drawTile: (gameId: string, playerId: string) => void;
-  placeTiles: (gameId: string, playerId: string, groups: TileGroup[]) => void;
-  returnTiles: (gameId: string, playerId: string) => void;
-  endTurn: (gameId: string, playerId: string) => void;
+  joinGame: (roomId: string) => void;
+  startGame: (roomId: string) => void;
+  playTurn: (
+    roomId: string,
+    newBoard: TileGroup[],
+    tilesPlayed: Tile[],
+  ) => void;
+  drawTile: (roomId: string) => void;
+  leaveGame: (roomId: string) => void;
 };
 
 export const GameContext = createContext<GameContextType>({
   gameState: null,
   isConnected: false,
-  joinRoom: () => {},
-  leaveRoom: () => {},
+  joinGame: () => {},
+  startGame: () => {},
+  playTurn: () => {},
   drawTile: () => {},
-  placeTiles: () => {},
-  returnTiles: () => {},
-  endTurn: () => {},
+  leaveGame: () => {},
 });

@@ -1,7 +1,11 @@
-import type { Player } from '../../context/game/GameContext';
+interface PanelPlayer {
+  id: string;
+  username: string;
+  tileCount: number;
+}
 
 interface PlayerPanelProps {
-  players: Player[];
+  players: PanelPlayer[];
   currentTurn: string;
   currentUserId: string;
 }

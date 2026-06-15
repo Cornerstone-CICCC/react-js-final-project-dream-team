@@ -16,6 +16,8 @@
 import { Server, Socket } from "socket.io";
 import { connectDB } from "@/lib/db";
 import { Game } from "@/models/Game";
+import { Table } from "@/models/Table";
+import { User } from "@/models/User";
 import { buildShuffledDeck } from "@/lib/game/tiles";
 import { validateBoardTransition, calcPlayedValue } from "@/lib/game/validation";
 import { calcFinalScores, INITIAL_MELD_MIN } from "@/lib/game/scoring";
@@ -30,6 +32,7 @@ export function registerGameHandlers(io: Server, socket: Socket) {
   socket.on("game:start", (data) => handleStart(io, socket, data));
   socket.on("game:playTurn", (data) => handlePlayTurn(io, socket, data));
   socket.on("game:draw", (data) => handleDraw(io, socket, data));
+  socket.on("game:leave", (data) => handleLeave(io, socket, data));
 }
 
 // ─── game:join ────────────────────────────────────────────────────────────────
@@ -40,19 +43,24 @@ async function handleJoin(
   { roomId, userId, username }: { roomId: string; userId: string; username: string }
 ) {
   await connectDB();
+  // Use the server-verified identity from the JWT middleware, not the
+  // client-supplied values — prevents impersonation.
+  const verifiedUserId: string = socket.data.userId ?? userId;
+  const verifiedUsername: string = socket.data.username ?? username;
   socket.join(roomId);
 
   let game = await Game.findOne({ roomId });
 
   if (!game) {
-    game = await Game.create({ roomId, players: [{ userId, username }] });
-  } else if (!game.players.find((p: { userId: string }) => p.userId === userId)) {
-    game.players.push({ userId, username });
-    game.initialMeldDone.set(userId, false);
+    // roomId IS the table's _id — store it so we can sync Table status later
+    game = await Game.create({ roomId, tableId: roomId, players: [{ userId: verifiedUserId, username: verifiedUsername }] });
+  } else if (!game.players.find((p: { userId: string }) => p.userId === verifiedUserId)) {
+    game.players.push({ userId: verifiedUserId, username: verifiedUsername });
+    game.initialMeldDone.set(verifiedUserId, false);
     await game.save();
   }
 
-  io.to(roomId).emit("game:state", serializeGame(game, userId));
+  io.to(roomId).emit("game:state", serializeGame(game, verifiedUserId));
 }
 
 // ─── game:start ───────────────────────────────────────────────────────────────
@@ -60,9 +68,10 @@ async function handleJoin(
 async function handleStart(
   io: Server,
   socket: Socket,
-  { roomId, userId }: { roomId: string; userId: string }
+  { roomId }: { roomId: string }
 ) {
   await connectDB();
+  const userId: string = socket.data.userId;
   const game = await Game.findOne({ roomId });
 
   if (!game) return emit(socket, "game:error", "Game not found.");
@@ -88,6 +97,14 @@ async function handleStart(
   addLog(game, { userId: "system", username: "System", message: "Game started. Initial draw completed." });
 
   await game.save();
+
+  // Sync the Table document so the lobby shows this table as in-progress
+  if (game.tableId) {
+    await Table.findByIdAndUpdate(game.tableId, {
+      status: "in-progress",
+      gameId: game._id.toString(),
+    });
+  }
 
   // Each player gets their own snapshot (so hands stay private)
   for (const player of game.players) {
@@ -122,12 +139,12 @@ async function handlePlayTurn(
   socket: Socket,
   {
     roomId,
-    userId,
     newBoard,
     tilesPlayed,
-  }: { roomId: string; userId: string; newBoard: Tile[][]; tilesPlayed: Tile[] }
+  }: { roomId: string; newBoard: Tile[][]; tilesPlayed: Tile[] }
 ) {
   await connectDB();
+  const userId: string = socket.data.userId;
   const game = await Game.findOne({ roomId });
 
   if (!game) return emit(socket, "game:error", "Game not found.");
@@ -195,9 +212,10 @@ async function handlePlayTurn(
 async function handleDraw(
   io: Server,
   socket: Socket,
-  { roomId, userId }: { roomId: string; userId: string }
+  { roomId }: { roomId: string }
 ) {
   await connectDB();
+  const userId: string = socket.data.userId;
   const game = await Game.findOne({ roomId });
 
   if (!game) return emit(socket, "game:error", "Game not found.");
@@ -223,6 +241,76 @@ async function handleDraw(
   broadcastState(io, game);
   // Also send the drawing player their updated private hand
   socket.emit("game:state", serializeGame(game, userId));
+}
+
+// ─── game:leave ───────────────────────────────────────────────────────────────
+/**
+ * A player voluntarily leaves (forfeits) a game in progress, or leaves a
+ * waiting room before the game starts.
+ *
+ * Waiting room: player is simply removed from the Game document.
+ * In-progress:  the leaver forfeits — their hand tiles count as a loss penalty,
+ *               and if only one player remains they are declared the winner.
+ */
+async function handleLeave(
+  io: Server,
+  socket: Socket,
+  { roomId }: { roomId: string }
+) {
+  await connectDB();
+  const userId: string = socket.data.userId;
+  const game = await Game.findOne({ roomId });
+  if (!game) return;
+
+  const playerIdx = game.players.findIndex((p: { userId: string }) => p.userId === userId);
+  if (playerIdx === -1) return;
+
+  const player = game.players[playerIdx];
+
+  if (game.status === "waiting") {
+    // Remove from the Game doc and sync the Table doc
+    game.players.splice(playerIdx, 1);
+    await game.save();
+    if (game.tableId) {
+      await Table.findByIdAndUpdate(game.tableId, {
+        $pull: { players: { userId } },
+      });
+    }
+    socket.leave(roomId);
+    io.to(roomId).emit("game:state", serializeGame(game, null));
+    return;
+  }
+
+  if (game.status === "in-progress") {
+    addLog(game, { userId, username: player.username, message: "forfeited and left the game." });
+
+    // Remove the player's hand (counts as a loss)
+    game.hands.set(userId, []);
+    game.players.splice(playerIdx, 1);
+
+    socket.leave(roomId);
+
+    if (game.players.length < 2) {
+      // Only one player left — they win by default
+      if (game.players.length === 1) {
+        await finishGame(io, game, game.players[0].userId);
+      } else {
+        // No players left — just mark finished
+        game.status = "finished";
+        await game.save();
+        io.to(roomId).emit("game:state", serializeGame(game, null));
+      }
+      return;
+    }
+
+    // If it was this player's turn, advance to the next
+    if (game.currentTurn === userId) {
+      advanceTurn(game);
+    }
+
+    await game.save();
+    broadcastState(io, game);
+  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -276,6 +364,26 @@ async function finishGame(
   });
 
   await game.save();
+
+  // ── Persist stats to each User document ─────────────────────────────────
+  const statsUpdates = scores.map((result) => {
+    return User.findByIdAndUpdate(result.userId, {
+      $inc: {
+        "stats.gamesPlayed": 1,
+        "stats.gamesWon": result.won ? 1 : 0,
+        // Only add positive winner score; losers get a negative result but we
+        // store totalScore as a running sum (can be negative over time).
+        "stats.totalScore": result.score,
+        "stats.totalTurns": game.turnCount,
+      },
+    });
+  });
+  await Promise.all(statsUpdates);
+
+  // ── Mark the Table as finished ───────────────────────────────────────────
+  if (game.tableId) {
+    await Table.findByIdAndUpdate(game.tableId, { status: "finished" });
+  }
 
   io.to(game.roomId).emit("game:over", {
     winner: { userId: winnerId, username: winner.username },

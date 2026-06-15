@@ -45,6 +45,8 @@ export const POST = requireAuth(async (req: NextRequest, context: Context, sessi
 
     return NextResponse.json({
       message: "Joined table.",
+      // roomId equals the table _id — used by the frontend to open the socket room
+      roomId: table._id.toString(),
       table: {
         id: table._id,
         tableNumber: table.tableNumber,

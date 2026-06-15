@@ -67,6 +67,8 @@ export const POST = requireAuth(async (req, _ctx, session) => {
 
     const response: Record<string, unknown> = {
       message: "Table created.",
+      // roomId equals the table _id — used by the frontend to open the socket room
+      roomId: table._id.toString(),
       table: {
         id: table._id,
         tableNumber: table.tableNumber,

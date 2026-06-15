@@ -19,17 +19,15 @@ export const POST = requireAuth(async (req: NextRequest, context: Context, sessi
     if (!table) {
       return NextResponse.json({ error: "Table not found." }, { status: 404 });
     }
-    if (table.status !== "waiting") {
-      return NextResponse.json({ error: "This table is already in progress." }, { status: 409 });
-    }
-    if (table.players.length >= table.maxPlayers) {
-      return NextResponse.json({ error: "This table is full." }, { status: 409 });
-    }
 
     // Check player isn't already seated
     const alreadyJoined = table.players.some((p: { userId: string }) => p.userId === session.userId);
-    if (alreadyJoined) {
-      return NextResponse.json({ error: "You are already at this table." }, { status: 409 });
+    // Allow a seated player to rejoin even after the table has started.
+    if (table.status !== "waiting" && !alreadyJoined) {
+      return NextResponse.json({ error: "This table is already in progress." }, { status: 409 });
+    }
+    if (table.players.length >= table.maxPlayers && !alreadyJoined) {
+      return NextResponse.json({ error: "This table is full." }, { status: 409 });
     }
 
     // Private table — validate invite code
@@ -40,13 +38,15 @@ export const POST = requireAuth(async (req: NextRequest, context: Context, sessi
       }
     }
 
-    table.players.push({ userId: session.userId, username: session.username });
-    await table.save();
+    if (!alreadyJoined) {
+      table.players.push({ userId: session.userId, username: session.username });
+      await table.save();
+    }
 
     return NextResponse.json({
-      message: "Joined table.",
+      message: alreadyJoined ? "Rejoined table." : "Joined table.",
       // roomId equals the table _id — used by the frontend to open the socket room
-      roomId: table._id.toString(),
+      roomId: (table.gameId ?? table._id.toString()).toString(),
       table: {
         id: table._id,
         tableNumber: table.tableNumber,

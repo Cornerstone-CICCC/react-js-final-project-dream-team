@@ -51,8 +51,8 @@ const TableSchema = new Schema<ITable>(
   { timestamps: true }
 );
 
-// Auto-increment tableNumber before saving a new document
-TableSchema.pre("save", async function () {
+// Auto-increment tableNumber before validation so the required check passes
+TableSchema.pre("validate", async function () {
   if (!this.isNew) return;
   const last = await mongoose.model("Table").findOne({}, {}, { sort: { tableNumber: -1 } });
   this.tableNumber = last ? last.tableNumber + 1 : 1;

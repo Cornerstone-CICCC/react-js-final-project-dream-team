@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "tsx watch server.ts",
+    "dev": "node --env-file=.env.local --require ./node_modules/next/dist/server/node-environment-baseline.js --import tsx server.ts",
     "build": "next build",
     "start": "NODE_ENV=production tsx server.ts",
     "lint": "eslint"

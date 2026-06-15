@@ -58,6 +58,7 @@ type GameContextType = {
     tilesPlayed: Tile[],
   ) => void;
   drawTile: (roomId: string) => void;
+  endTurn: (roomId: string) => void;
   leaveGame: (roomId: string) => void;
 };
 
@@ -68,5 +69,6 @@ export const GameContext = createContext<GameContextType>({
   startGame: () => {},
   playTurn: () => {},
   drawTile: () => {},
+  endTurn: () => {},
   leaveGame: () => {},
 });

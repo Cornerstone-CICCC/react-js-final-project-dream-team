@@ -12,6 +12,7 @@ import {
 import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
 import type { Tile, TileGroup } from '../context/game/GameContext';
 
+import { IoTrashOutline } from 'react-icons/io5';
 import Sidebar from '../components/game/Sidebar';
 import PlayerPanel from '../components/game/Playerpanel';
 import Board from '../components/game/Board';
@@ -21,7 +22,7 @@ import TileCard from '../components/game/TileCard';
 
 const GamePage = () => {
   const { roomId } = useParams<{ roomId: string }>();
-  const { gameState, joinGame, startGame, playTurn, drawTile, leaveGame } =
+  const { gameState, isConnected, joinGame, startGame, playTurn, drawTile, endTurn, leaveGame } =
     useGame();
   const { user } = useUser();
   const navigate = useNavigate();
@@ -38,9 +39,16 @@ const GamePage = () => {
   const isMyTurn = gameState?.currentTurn === user?.id;
   const isWaiting = gameState?.status === 'waiting';
   const isHost = gameState?.players[0]?.userId === user?.id;
+  const currentTurnName =
+    gameState?.players.find((p) => p.userId === gameState.currentTurn)?.username ?? 'Unknown';
 
+  // Emit game:join as soon as the socket is connected (or reconnects)
   useEffect(() => {
-    if (roomId) joinGame(roomId);
+    if (roomId && isConnected) joinGame(roomId);
+  }, [roomId, isConnected]);
+
+  // Cleanup: leave game only on unmount
+  useEffect(() => {
     return () => {
       if (roomId) leaveGame(roomId);
     };
@@ -65,7 +73,18 @@ const GamePage = () => {
 
     const tile = active.data.current?.tile as Tile;
     setLocalRack((prev) => prev.filter((t) => t.id !== tile.id));
-    setLocalBoard((prev) => [...prev, [tile]]);
+    setLocalBoard((prev) => {
+      const nextBoard = [...prev];
+      const lastMeld = nextBoard[nextBoard.length - 1];
+
+      if (lastMeld) {
+        nextBoard[nextBoard.length - 1] = [...lastMeld, tile];
+      } else {
+        nextBoard.push([tile]);
+      }
+
+      return nextBoard;
+    });
   };
 
   const handleDeclare = () => {
@@ -84,7 +103,7 @@ const GamePage = () => {
 
   const handleEndTurn = () => {
     if (!roomId) return;
-    drawTile(roomId);
+    endTurn(roomId);
   };
 
   const handleDrawTile = () => {
@@ -95,6 +114,30 @@ const GamePage = () => {
   const handleStartGame = () => {
     if (!roomId) return;
     startGame(roomId);
+  };
+
+  const handleDeleteTable = async () => {
+    if (!roomId) return;
+    const confirmed = window.confirm('Delete this table? This cannot be undone.');
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch(`/api/tables/${roomId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        alert(errorData.error || 'Could not delete table');
+        return;
+      }
+
+      navigate('/lobby');
+    } catch (error) {
+      console.error(error);
+      alert('Something went wrong');
+    }
   };
 
   if (!gameState) {
@@ -112,7 +155,7 @@ const GamePage = () => {
           Waiting for players...
         </h2>
         <p className="text-sm text-[#747878]">
-          {gameState.players.length} / 4 players joined
+          {gameState.players.length} player(s) joined
         </p>
         <div className="flex flex-col gap-2">
           {gameState.players.map((p) => (
@@ -135,24 +178,36 @@ const GamePage = () => {
           ))}
         </div>
 
-        {isHost && gameState.players.length >= 2 && (
-          <button
-            onClick={handleStartGame}
-            className="px-8 py-3 bg-[#1a1c1c] text-white text-sm font-bold rounded-full hover:opacity-85 transition-all"
-          >
-            Start Game
-          </button>
-        )}
+        <div className="flex gap-3 flex-wrap justify-center">
+          {isHost && (
+            <button
+              onClick={handleStartGame}
+              className="px-8 py-3 bg-[#1a1c1c] text-white text-sm font-bold rounded-full hover:opacity-85 transition-all"
+            >
+              Start Game
+            </button>
+          )}
 
-        <button
-          onClick={() => {
-            leaveGame(roomId!);
-            navigate('/lobby');
-          }}
-          className="text-sm text-[#747878] hover:text-[#1a1c1c] transition-colors"
-        >
-          Leave Table
-        </button>
+          <button
+            onClick={() => {
+              leaveGame(roomId!);
+              navigate('/lobby');
+            }}
+            className="text-sm text-[#747878] hover:text-[#1a1c1c] transition-colors px-6 py-3 border border-[#E2E2E2] rounded-full hover:border-[#1a1c1c]"
+          >
+            Leave Table
+          </button>
+
+          {isHost && (
+            <button
+              onClick={handleDeleteTable}
+              className="flex items-center gap-2 px-6 py-3 border-2 border-[#ea4d1c] text-[#ea4d1c] text-sm font-bold rounded-full hover:bg-[#ea4d1c] hover:text-white transition-all"
+              title="Delete table"
+            >
+              <IoTrashOutline size={16} /> Delete Table
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -179,6 +234,12 @@ const GamePage = () => {
             currentUserId={user?.id ?? ''}
           />
 
+          <div className="px-6 py-3 border-b border-[#E2E2E2] bg-white flex items-center justify-center">
+            <span className="text-xs font-bold tracking-[0.25em] text-[#8E8576] uppercase">
+              Current Turn: {gameState.currentTurn === user?.id ? 'You' : currentTurnName}
+            </span>
+          </div>
+
           <Board board={localBoard} />
 
           <Rack
@@ -187,8 +248,10 @@ const GamePage = () => {
             isMyTurn={isMyTurn}
             onSelectTile={setSelectedTile}
             onDeclare={handleDeclare}
+            onDrawTile={handleDrawTile}
             onReturn={handleReturn}
             onEndTurn={handleEndTurn}
+            currentTurnLabel={`Turn: ${gameState.currentTurn === user?.id ? 'You' : currentTurnName}`}
           />
         </div>
 

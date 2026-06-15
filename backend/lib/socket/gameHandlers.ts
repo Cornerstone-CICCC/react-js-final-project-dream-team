@@ -6,6 +6,7 @@
  *   game:start      — deal 14 tiles to each player and begin
  *   game:playTurn   — player submits a new board state + tiles from hand
  *   game:draw       — player cannot/will not play; draws one tile from pool
+ *   game:endTurn    — player ends their turn without playing
  *
  * Events the SERVER emits:
  *   game:state      — full game snapshot (sent after every state change)
@@ -32,6 +33,7 @@ export function registerGameHandlers(io: Server, socket: Socket) {
   socket.on("game:start", (data) => handleStart(io, socket, data));
   socket.on("game:playTurn", (data) => handlePlayTurn(io, socket, data));
   socket.on("game:draw", (data) => handleDraw(io, socket, data));
+  socket.on("game:endTurn", (data) => handleEndTurn(io, socket, data));
   socket.on("game:leave", (data) => handleLeave(io, socket, data));
 }
 
@@ -76,7 +78,7 @@ async function handleStart(
 
   if (!game) return emit(socket, "game:error", "Game not found.");
   if (game.status !== "waiting") return emit(socket, "game:error", "Game already started.");
-  if (game.players.length < 2) return emit(socket, "game:error", "Need at least 2 players.");
+  if (game.players.length < 1) return emit(socket, "game:error", "No players in the game.");
   if (game.players[0].userId !== userId) return emit(socket, "game:error", "Only the host can start the game.");
 
   const deck = buildShuffledDeck();
@@ -235,11 +237,36 @@ async function handleDraw(
     addLog(game, { userId, username: player.username, message: "drew a tile from the pool." });
   }
 
-  advanceTurn(game);
   await game.save();
 
   broadcastState(io, game);
   // Also send the drawing player their updated private hand
+  socket.emit("game:state", serializeGame(game, userId));
+}
+
+// ─── game:endTurn ────────────────────────────────────────────────────────────
+
+async function handleEndTurn(
+  io: Server,
+  socket: Socket,
+  { roomId }: { roomId: string }
+) {
+  await connectDB();
+  const userId: string = socket.data.userId;
+  const game = await Game.findOne({ roomId });
+
+  if (!game) return emit(socket, "game:error", "Game not found.");
+  if (game.status !== "in-progress") return emit(socket, "game:error", "Game is not in progress.");
+  if (game.currentTurn !== userId) return emit(socket, "game:error", "It is not your turn.");
+
+  const player = game.players.find((p: { userId: string }) => p.userId === userId)!;
+
+  addLog(game, { userId, username: player.username, message: "ended their turn." });
+
+  advanceTurn(game);
+  await game.save();
+
+  broadcastState(io, game);
   socket.emit("game:state", serializeGame(game, userId));
 }
 

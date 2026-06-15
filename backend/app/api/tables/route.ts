@@ -28,7 +28,12 @@ export async function GET(req: NextRequest) {
 
     const tables = await Table.find(filter).sort({ createdAt: -1 }).limit(50);
 
-    return NextResponse.json({ tables });
+    return NextResponse.json({
+      tables: tables.map((table) => ({
+        ...table.toObject(),
+        creatorId: table.players[0]?.userId ?? null,
+      })),
+    });
   } catch (err) {
     console.error("[GET /api/tables]", err);
     return NextResponse.json({ error: "Internal server error." }, { status: 500 });
@@ -72,6 +77,7 @@ export const POST = requireAuth(async (req, _ctx, session) => {
       table: {
         id: table._id,
         tableNumber: table.tableNumber,
+        creatorId: table.players[0]?.userId ?? null,
         maxPlayers: table.maxPlayers,
         players: table.players,
         status: table.status,

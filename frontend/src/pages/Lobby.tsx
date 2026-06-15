@@ -3,11 +3,13 @@ import { useNavigate } from 'react-router';
 import toast from 'react-hot-toast';
 import { HiUsers } from 'react-icons/hi2';
 import { FaPlus } from 'react-icons/fa6';
-import { IoClose, IoSearchOutline } from 'react-icons/io5';
+import { IoClose, IoSearchOutline, IoTrashOutline } from 'react-icons/io5';
+import { useUser } from '../context/user/UseUser';
 
 interface Room {
   id: string;
   name: string;
+  creatorId: string | null;
   players: number;
   maxPlayers: number;
   status: 'waiting' | 'in-progress';
@@ -15,40 +17,11 @@ interface Room {
 
 const Lobby = () => {
   const navigate = useNavigate();
+  const { user } = useUser();
   const [search, setSearch] = useState<string>('');
   const [showModal, setShowModal] = useState<boolean>(false);
   const [tableName, setTableName] = useState<string>('');
-
-  const [rooms, setRooms] = useState<Room[]>([
-    {
-      id: '14',
-      name: 'Table #14',
-      players: 3,
-      maxPlayers: 4,
-      status: 'waiting',
-    },
-    {
-      id: '22',
-      name: 'Table #22',
-      players: 1,
-      maxPlayers: 4,
-      status: 'waiting',
-    },
-    {
-      id: '31',
-      name: 'Table #31',
-      players: 2,
-      maxPlayers: 4,
-      status: 'waiting',
-    },
-    {
-      id: '08',
-      name: 'Table #08',
-      players: 3,
-      maxPlayers: 4,
-      status: 'waiting',
-    },
-  ]);
+  const [rooms, setRooms] = useState<Room[]>([]);
 
   const filteredRooms = rooms.filter((room) =>
     room.name.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
@@ -62,12 +35,45 @@ const Lobby = () => {
       });
 
       if (!res.ok) {
-        const errorData = await res.json();
-        toast.error(errorData.message || 'Could not join table');
+        if (res.status === 409) {
+          const errorData = await res.json();
+          if (errorData.error === 'You are already at this table.') {
+            navigate(`/game/${roomId}`);
+            return;
+          }
+          toast.error(errorData.error || 'Could not join table');
+        } else {
+          const errorData = await res.json();
+          toast.error(errorData.error || 'Could not join table');
+        }
         return;
       }
 
       navigate(`/game/${roomId}`);
+    } catch (error) {
+      console.error(error);
+      toast.error('Something went wrong with the Network');
+    }
+  };
+
+  const handleDelete = async (roomId: string) => {
+    const confirmed = window.confirm('Delete this table? This cannot be undone.');
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch(`/api/tables/${roomId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        toast.error(errorData.error || 'Could not delete table');
+        return;
+      }
+
+      setRooms((prev) => prev.filter((room) => room.id !== roomId));
+      toast.success('Table deleted.');
     } catch (error) {
       console.error(error);
       toast.error('Something went wrong with the Network');
@@ -90,7 +96,7 @@ const Lobby = () => {
 
       if (!res.ok) {
         const errorData = await res.json();
-        toast.error(errorData.message || 'Could not create table');
+        toast.error(errorData.error || 'Could not create table');
         return;
       }
 
@@ -118,12 +124,14 @@ const Lobby = () => {
           (t: {
             _id: string;
             tableNumber: number;
+            creatorId: string | null;
             players: { userId: string }[];
             maxPlayers: number;
             status: 'waiting' | 'in-progress';
           }) => ({
             id: t._id,
             name: `Table #${t.tableNumber}`,
+            creatorId: t.creatorId,
             players: t.players.length,
             maxPlayers: t.maxPlayers,
             status: t.status,
@@ -136,7 +144,6 @@ const Lobby = () => {
 
   return (
     <div className="max-w-300 mx-auto px-6 py-10">
-      {/* Header */}
       <div className="flex items-start justify-between mb-10">
         <div>
           <h1 className="text-4xl font-bold text-[#1a1c1c]">Find Your Table</h1>
@@ -152,7 +159,6 @@ const Lobby = () => {
         </button>
       </div>
 
-      {/* Search */}
       <div className="relative mb-8">
         <IoSearchOutline
           className="absolute left-4 top-1/2 -translate-y-1/2 text-[#ADADAD]"
@@ -167,7 +173,6 @@ const Lobby = () => {
         />
       </div>
 
-      {/* Room cards grid */}
       {filteredRooms.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-24 text-center">
           <div className="w-16 h-19 bg-white border border-[#E2E2E2] rounded-2xl flex flex-col items-center justify-center shadow-sm mb-6">
@@ -177,9 +182,7 @@ const Lobby = () => {
             {search ? `No tables matching "${search}"` : 'No tables available.'}
           </h3>
           <p className="text-sm text-[#747878] mb-6">
-            {search
-              ? 'Try a different name.'
-              : 'Be the first to create a table!'}
+            {search ? 'Try a different name.' : 'Be the first to create a table!'}
           </p>
           {!search && (
             <button
@@ -194,26 +197,23 @@ const Lobby = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredRooms.map((room) => {
             const isFull = room.players >= room.maxPlayers;
+            const canDelete = room.status === 'waiting' && room.creatorId === user?.id;
 
             return (
               <div
                 key={room.id}
                 className="bg-white border border-[#E2E2E2] rounded-2xl p-6 flex flex-col gap-5 hover:shadow-md transition-shadow"
               >
-                {/* Card Header */}
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-semibold text-[#1a1c1c]">
                     {room.name}
                   </h3>
-
-                  {/* Player count badge */}
                   <span className="flex items-center gap-1.5 px-3 py-1 bg-[#F3F3F4] rounded-full text-xs font-bold text-[#444748]">
                     <HiUsers size={14} />
                     {room.players}/{room.maxPlayers}
                   </span>
                 </div>
 
-                {/* Players avatars */}
                 <div className="flex items-center gap-1">
                   {Array.from({ length: room.players }).map((_, i) => (
                     <div
@@ -226,7 +226,6 @@ const Lobby = () => {
                     </div>
                   ))}
 
-                  {/* Empty slots */}
                   {Array.from({ length: room.maxPlayers - room.players }).map(
                     (_, i) => (
                       <div
@@ -237,21 +236,31 @@ const Lobby = () => {
                   )}
                 </div>
 
-                {/* Join Button */}
-                <button
-                  onClick={() => handleJoin(room.id)}
-                  disabled={isFull}
-                  className={`w-full py-3 rounded-full text-sm font-bold transition-all ${isFull ? 'bg-[#F3F3F4] text-[#ADADAD] cursor-not-allowed' : 'bg-[#1a1c1c] text-white hover:opacity-85 active:scale-[0.98]'}`}
-                >
-                  {isFull ? 'Table Full' : 'Join Table'}
-                </button>
+                <div className="flex gap-2 items-center">
+                  <button
+                    onClick={() => handleJoin(room.id)}
+                    disabled={isFull}
+                    className={`flex-1 py-3 rounded-full text-sm font-bold transition-all ${isFull ? 'bg-[#F3F3F4] text-[#ADADAD] cursor-not-allowed' : 'bg-[#1a1c1c] text-white hover:opacity-85 active:scale-[0.98]'}`}
+                  >
+                    {isFull ? 'Table Full' : 'Join Table'}
+                  </button>
+
+                  {canDelete && (
+                    <button
+                      onClick={() => handleDelete(room.id)}
+                      className="px-3 py-3 border-2 border-[#ea4d1c] text-[#ea4d1c] font-bold rounded-full hover:bg-[#ea4d1c] hover:text-white transition-all text-sm"
+                      title="Delete table"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
         </div>
       )}
 
-      {/* Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-3xl p-8 w-full max-w-sm mx-4 shadow-2xl">
@@ -267,7 +276,6 @@ const Lobby = () => {
               </button>
             </div>
 
-            {/* Table name input */}
             <div className="mb-6">
               <label className="block text-xs font-bold tracking-widest text-[#444748] mb-2">
                 TABLE NAME
@@ -283,7 +291,6 @@ const Lobby = () => {
               />
             </div>
 
-            {/* Buttons */}
             <div className="flex gap-3">
               <button
                 onClick={handleCloseModal}

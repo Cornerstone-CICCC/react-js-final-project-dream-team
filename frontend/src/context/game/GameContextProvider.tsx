@@ -27,7 +27,15 @@ const GameContextProvider = ({ children }: { children: ReactNode }) => {
 
     // Full game snapshot after every state change
     newSocket.on('game:state', (state: GameState) => {
-      setGameState(state);
+      setGameState((prev) => {
+        if (!prev) return state;
+
+        return {
+          ...prev,
+          ...state,
+          myHand: state.myHand ?? prev.myHand,
+        };
+      });
     });
 
     // Error from server — invalid move or unauthorized action
@@ -98,6 +106,13 @@ const GameContextProvider = ({ children }: { children: ReactNode }) => {
     [socket],
   );
 
+  const endTurn = useCallback(
+    (roomId: string) => {
+      socket?.emit('game:endTurn', { roomId });
+    },
+    [socket],
+  );
+
   const leaveGame = useCallback(
     (roomId: string) => {
       socket?.emit('game:leave', { roomId });
@@ -114,6 +129,7 @@ const GameContextProvider = ({ children }: { children: ReactNode }) => {
         startGame,
         playTurn,
         drawTile,
+        endTurn,
         leaveGame,
       }}
     >

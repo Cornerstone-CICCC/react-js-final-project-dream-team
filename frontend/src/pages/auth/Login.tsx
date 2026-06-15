@@ -28,7 +28,7 @@ const Login = () => {
       }
 
       const data = await res.json();
-      setUser({ id: data.id, username: data.username, email: data.email });
+      setUser({ id: data.user.id, username: data.user.username, email: data.user.email });
       navigate('/lobby');
     } catch (error) {
       console.log(error);

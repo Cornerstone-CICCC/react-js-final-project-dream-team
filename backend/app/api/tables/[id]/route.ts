@@ -45,12 +45,6 @@ export const DELETE = requireAuth(async (_req, context, session) => {
     if (table.players[0]?.userId !== session.userId) {
       return NextResponse.json({ error: "Only the table creator can delete it." }, { status: 403 });
     }
-    if (table.status !== "waiting") {
-      return NextResponse.json(
-        { error: "Cannot delete a table that is already in progress." },
-        { status: 409 }
-      );
-    }
 
     await table.deleteOne();
     return NextResponse.json({ message: "Table deleted." });
